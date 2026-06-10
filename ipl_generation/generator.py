@@ -132,7 +132,6 @@ class IPLGenerator:
             )
 
         except:
-
             return None
 
     # ------------------------
@@ -142,7 +141,8 @@ class IPLGenerator:
     def generate_answer(
         self,
         query,
-        retrieved_docs
+        retrieved_docs,
+        last_context=""
     ):
 
         context = (
@@ -151,6 +151,11 @@ class IPLGenerator:
                     doc.page_content
                     for doc
                     in retrieved_docs
+
+                    if hasattr(
+                        doc,
+                        "page_content"
+                    )
                 ]
             )
         )
@@ -248,92 +253,83 @@ class IPLGenerator:
                 )
 
         # ------------------------
-        # HIGHEST STRIKE RATE
-        # ------------------------
-
-        if (
-            "strike rate"
-            in query_lower
-        ):
-
-            result = (
-                self.get_max_stat(
-                    rows,
-                    "SR"
-                )
-            )
-
-            if result:
-
-                player, value = result
-
-                return (
-                    f"{player} "
-                    f"has the highest "
-                    f"strike rate "
-                    f"of {value}."
-                )
-
-        # ------------------------
-        # HIGHEST AVERAGE
-        # ------------------------
-
-        if (
-            "average"
-            in query_lower
-        ):
-
-            result = (
-                self.get_max_stat(
-                    rows,
-                    "Avg"
-                )
-            )
-
-            if result:
-
-                player, value = result
-
-                return (
-                    f"{player} "
-                    f"has the highest "
-                    f"average of "
-                    f"{value}."
-                )
-
-        # ------------------------
         # LLM FALLBACK
         # ------------------------
 
         prompt = f"""
-You are an IPL data assistant.
+You are an IPL RAG assistant.
 
-You MUST answer ONLY
-from the retrieved context.
+Your job:
+Answer ONLY using the
+retrieved IPL context.
+
+IMPORTANT:
+Conversation history
+matters.
+
+If the user asks:
+
+- they
+- them
+- those players
+- those teams
+- him
+- her
+- it
+
+resolve the reference
+using Previous Context.
 
 STRICT RULES:
 
-1. NEVER use outside
-cricket knowledge.
+1. Use ONLY retrieved context
 
-2. NEVER guess.
+2. Use Previous Context
+ONLY to resolve references
 
-3. If answer is not
-present in context,
-return exactly:
+3. NEVER invent players
 
-"I could not find this information in the IPL documents."
+4. NEVER add outside
+knowledge
 
-4. Use ONLY values
-present in context.
+5. NEVER mention players
+not present in retrieved
+context
 
-5. NEVER hallucinate.
+6. Preserve filters exactly
 
-Retrieved Context:
-{context}
+Example:
+
+Previous Context:
+Players with more than
+5000 runs:
+Virat Kohli,
+Rohit Sharma,
+David Warner
+
+Question:
+How many centuries
+they have scored?
+
+Correct behavior:
+Only answer for those
+3 players.
+
+If information is missing,
+say:
+
+"I could not find this
+information in the IPL
+documents."
+
+Previous Context:
+{last_context}
 
 Question:
 {query}
+
+Retrieved Context:
+{context}
 
 Answer:
 """
@@ -345,7 +341,7 @@ Answer:
         )
 
         return (
-            response.content
+            response.content.strip()
         )
 
     # ------------------------
@@ -366,14 +362,13 @@ the web result.
 
 STRICT RULES:
 
-1. Give SHORT answer.
+1. Give short answer
 
-2. Maximum 2 sentences.
+2. Maximum 2 sentences
 
-3. Extract ONLY
-relevant information.
+3. Extract ONLY relevant info
 
-4. Ignore unrelated text.
+4. Ignore unrelated text
 
 Question:
 {query}
@@ -391,5 +386,5 @@ Clean Answer:
         )
 
         return (
-            response.content
+            response.content.strip()
         )

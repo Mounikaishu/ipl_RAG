@@ -1,36 +1,5 @@
 
-import sys
-from pathlib import (
-    Path
-)
-
-
-# --------------------------
-# CONNECT FRAMEWORK
-# --------------------------
-
-framework_path = (
-    Path(__file__)
-    .resolve()
-    .parent.parent.parent
-    / "rag-pipeline-framework"
-)
-
-sys.path.append(
-    str(framework_path)
-)
-
-print(
-    "\nFramework Path:",
-    framework_path
-)
-
-
-# --------------------------
-# IMPORTS
-# --------------------------
-
-from query_processing.rewrite import (
+from rewrite.query_rewriter import (
     QueryRewriter
 )
 
@@ -58,14 +27,10 @@ from tools.web_search import (
     WebSearchTool
 )
 
-from memory.conversation_memory import (
-    ConversationMemory
-)
 
-
-# --------------------------
+# ------------------------
 # COMPONENTS
-# --------------------------
+# ------------------------
 
 rewriter = (
     QueryRewriter()
@@ -98,86 +63,23 @@ web_tool = (
     WebSearchTool()
 )
 
-memory = (
-    ConversationMemory()
-)
 
-
-# --------------------------
+# ------------------------
 # REWRITE NODE
-# --------------------------
+# ------------------------
 
 def rewrite_node(
     state
 ):
 
-    history = (
-        memory.get_context()
-    )
-
-    query = (
-        state["query"]
-    )
-
-    prompt = f"""
-You are an intelligent
-query rewriter.
-
-Conversation History:
-{history}
-
-Current User Question:
-{query}
-
-Your task:
-
-Rewrite the question
-using conversation history.
-
-Rules:
-
-1. Resolve pronouns:
-he, she, his, her,
-they, them.
-
-2. Resolve references:
-that player,
-that team,
-that match,
-that stadium.
-
-3. If previous answer
-mentions a player,
-replace vague terms.
-
-Example:
-
-History:
-User:
-Who scored highest runs?
-
-Assistant:
-Virat Kohli scored
-highest runs.
-
-Question:
-How many centuries
-does he have?
-
-Rewrite:
-How many centuries
-does Virat Kohli
-have in IPL?
-
-Return ONLY the
-rewritten query.
-"""
-
     rewritten_query = (
-        rewriter.llm
-        .invoke(prompt)
-        .content
-        .strip()
+        rewriter.rewrite(
+            state["query"],
+            state.get(
+                "chat_history",
+                []
+            )
+        )
     )
 
     print(
@@ -190,9 +92,10 @@ rewritten query.
         rewritten_query
     }
 
-# --------------------------
+
+# ------------------------
 # ROUTER NODE
-# --------------------------
+# ------------------------
 
 def router_node(
     state
@@ -217,13 +120,71 @@ def router_node(
     }
 
 
-# --------------------------
+# ------------------------
 # RETRIEVAL NODE
-# --------------------------
+# ------------------------
 
 def retrieval_node(
     state
 ):
+
+    original_query = (
+        state[
+            "query"
+        ]
+        .lower()
+    )
+
+    followup_words = [
+
+        "he",
+        "his",
+        "him",
+        "she",
+        "her",
+        "they",
+        "them",
+        "that player",
+        "this player",
+        "those players",
+        "those teams",
+        "their",
+        "its"
+    ]
+
+    print(
+        "\nOriginal Query:",
+        original_query
+    )
+
+    print(
+        "Last Context Size:",
+        len(
+            str(
+                state.get(
+                    "last_context",
+                    ""
+                )
+            )
+        )
+    )
+
+    # ------------------------
+    # FOLLOW-UP DETECTION
+    # ------------------------
+
+    is_followup = any(
+
+        word in original_query
+
+        for word
+
+        in followup_words
+    )
+
+    # ------------------------
+    # NORMAL RETRIEVAL
+    # ------------------------
 
     retrieved_docs = (
         retriever.retrieve(
@@ -242,15 +203,14 @@ def retrieval_node(
     )
 
     return {
-
         "retrieved_docs":
         retrieved_docs
     }
 
 
-# --------------------------
+# ------------------------
 # RERANK NODE
-# --------------------------
+# ------------------------
 
 def rerank_node(
     state
@@ -287,9 +247,9 @@ def rerank_node(
     }
 
 
-# --------------------------
+# ------------------------
 # REFINE NODE
-# --------------------------
+# ------------------------
 
 def refine_node(
     state
@@ -304,15 +264,14 @@ def refine_node(
     )
 
     return {
-
         "refined_docs":
         refined_docs
     }
 
 
-# --------------------------
+# ------------------------
 # GENERATE NODE
-# --------------------------
+# ------------------------
 
 def generate_node(
     state
@@ -329,20 +288,30 @@ def generate_node(
             retrieved_docs=
             state[
                 "refined_docs"
-            ]
+            ],
+
+            last_context=
+            state.get(
+                "last_context",
+                ""
+            )
         )
     )
 
     return {
-
         "answer":
-        answer
+        answer,
+
+        "retrieved_docs":
+        state[
+            "refined_docs"
+        ]
     }
 
 
-# --------------------------
+# ------------------------
 # WEB SEARCH NODE
-# --------------------------
+# ------------------------
 
 def web_search_node(
     state
@@ -362,48 +331,19 @@ def web_search_node(
             state[
                 "rewritten_query"
             ],
-
             web_result
         )
     )
 
     return {
-
         "answer":
         answer
     }
 
 
-# --------------------------
-# MEMORY UPDATE NODE
-# --------------------------
-
-def memory_update_node(
-    state
-):
-
-    memory.add_message(
-        "user",
-
-        state[
-            "query"
-        ]
-    )
-
-    memory.add_message(
-        "assistant",
-
-        state[
-            "answer"
-        ]
-    )
-
-    return {}
-
-
-# --------------------------
+# ------------------------
 # ROUTING LOGIC
-# --------------------------
+# ------------------------
 
 def routing_logic(
     state
@@ -414,16 +354,27 @@ def routing_logic(
     ]
 
 
+# ------------------------
+# CONFIDENCE LOGIC
+# ------------------------
+
 def confidence_logic(
     state
 ):
 
-    if (
-        state[
-            "confidence"
-        ]
-        < 8
-    ):
+    confidence = (
+        state.get(
+            "confidence",
+            100
+        )
+    )
+
+    print(
+        "\nConfidence:",
+        confidence
+    )
+
+    if confidence < 5:
 
         return (
             "WEB_SEARCH"

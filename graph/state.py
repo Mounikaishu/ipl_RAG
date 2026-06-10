@@ -33,3 +33,7 @@ class GraphState(
 
     web_result: str
 
+    chat_history: list
+    
+    last_context: str
+
