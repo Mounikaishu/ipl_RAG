@@ -26,8 +26,8 @@ print(
 # IMPORTS
 # --------------------------
 
-from data_ingestion.load_dataset import (
-    DatasetLoader
+from data_ingestion.docling_loader import (
+    DoclingPDFLoader
 )
 
 from data_ingestion.prepare_chunks import (
@@ -38,36 +38,8 @@ from ipl_retrieval.vector_store import (
     IPLVectorStore
 )
 
-from ipl_generation.generator import (
-    IPLGenerator
-)
-
-from routing.query_router import (
-    QueryRouter
-)
-
-from tools.web_search import (
-    WebSearchTool
-)
-
-from rewrite.query_rewriter import (
-    QueryRewriter
-)
-
-print(
-    QueryRewriter.__module__
-)
-
 from memory.cache import (
     CacheMemory
-)
-
-from rerank.reranker import (
-    Reranker
-)
-
-from refine.refiner import (
-    Refiner
 )
 
 from graph.workflow import (
@@ -80,7 +52,9 @@ from graph.workflow import (
 # ------------------------
 
 loader = (
-    DatasetLoader()
+    DoclingPDFLoader(
+        dataset_path="dataset"
+    )
 )
 
 documents = (
@@ -92,6 +66,14 @@ print(
     len(documents)
 )
 
+if len(documents) == 0:
+
+    print(
+        "\nNo documents loaded!"
+    )
+
+    exit()
+
 
 # ------------------------
 # PREPARE CHUNKS
@@ -102,8 +84,7 @@ chunk_preparer = (
 )
 
 chunks = (
-    chunk_preparer
-    .prepare_chunks(
+    chunk_preparer.prepare_chunks(
         documents
     )
 )
@@ -112,6 +93,14 @@ print(
     "\nFinal chunks:",
     len(chunks)
 )
+
+if len(chunks) == 0:
+
+    print(
+        "\nNo chunks created!"
+    )
+
+    exit()
 
 
 # ------------------------
@@ -122,13 +111,25 @@ vector_store = (
     IPLVectorStore()
 )
 
-vector_store.store_documents(
-    chunks
-)
+try:
 
-print(
-    "\nIPL Vector DB Ready!"
-)
+    vector_store.store_documents(
+        chunks
+    )
+
+    print(
+        "\nIPL Vector DB Ready!"
+    )
+
+except Exception as e:
+
+    print(
+        "\nEmbedding Error:"
+    )
+
+    print(e)
+
+    exit()
 
 
 # ------------------------
@@ -137,30 +138,6 @@ print(
 
 cache = (
     CacheMemory()
-)
-
-generator = (
-    IPLGenerator()
-)
-
-router = (
-    QueryRouter()
-)
-
-web_tool = (
-    WebSearchTool()
-)
-
-rewriter = (
-    QueryRewriter()
-)
-
-reranker = (
-    Reranker()
-)
-
-refiner = (
-    Refiner()
 )
 
 
@@ -196,11 +173,17 @@ while True:
     # CACHE CHECK
     # ------------------------
 
-    cached_answer = (
-        cache.get(
-            normalized_query
+    try:
+
+        cached_answer = (
+            cache.get(
+                f"v2_{normalized_query}"
+            )
         )
-    )
+
+    except Exception:
+
+        cached_answer = None
 
     if cached_answer:
 
@@ -219,18 +202,49 @@ while True:
         continue
 
     # ------------------------
-    # USE PREVIOUS CONTEXT
+    # PREVIOUS CONTEXT
     # ------------------------
 
-    last_context = []
+    last_context = ""
 
-    if len(chat_history) > 0:
+    retrieved_docs = []
+
+    resolved_entities = []
+    resolved_entity_type = None
+
+    if len(
+        chat_history
+    ) > 0:
 
         last_context = (
             chat_history[-1]
             .get(
+                "assistant",
+                ""
+            )[:500]
+        )
+
+        retrieved_docs = (
+            chat_history[-1]
+            .get(
                 "retrieved_docs",
                 []
+            )
+        )
+
+        resolved_entities = (
+            chat_history[-1]
+            .get(
+                "resolved_entities",
+                []
+            )
+        )
+
+        resolved_entity_type = (
+            chat_history[-1]
+            .get(
+                "resolved_entity_type",
+                None
             )
         )
 
@@ -241,32 +255,65 @@ while True:
 
     print(
         "Last Context Size:",
-        len(last_context)
+        len(
+            last_context
+        )
+    )
+
+    print(
+        "Previous Saved Entities:",
+        resolved_entities
     )
 
     # ------------------------
     # LANGGRAPH RUN
     # ------------------------
 
-    result = (
-        app.invoke(
-            {
-                "query":
-                query,
+    try:
 
-                "documents":
-                documents,
+        result = (
+            app.invoke(
+                {
+                    "query":
+                    query,
 
-                "chunks":
-                chunks,
+                    "documents":
+                    documents,
 
-                "chat_history":
-                chat_history[-1:],
+                    "chunks":
+                    chunks,
 
-                "last_context":
-                last_context
-            }
+                    "chat_history":
+                    chat_history[-3:],
+
+                    "last_context":
+                    last_context,
+
+                    "previous_docs":
+                    retrieved_docs,
+
+                    "resolved_entities":
+                    resolved_entities,
+
+                    "resolved_entity_type":
+                    resolved_entity_type
+                }
+            )
         )
+
+    except Exception as e:
+
+        print(
+            "\nGraph Error:"
+        )
+
+        print(e)
+
+        continue
+
+    print(
+        "\nGraph Result Keys:",
+        result.keys()
     )
 
     answer = (
@@ -274,6 +321,18 @@ while True:
             "answer",
             "No answer found."
         )
+    )
+
+    entities = (
+        result.get(
+            "resolved_entities",
+            []
+        )
+    )
+
+    print(
+        "\nSaving Entities:",
+        entities
     )
 
     # ------------------------
@@ -316,14 +375,22 @@ while True:
     # SAVE TO CACHE
     # ------------------------
 
-    cache.set(
-        normalized_query,
-        answer
-    )
+    try:
 
-    print(
-        "\nAnswer Cached!"
-    )
+        cache.set(
+            f"v2_{normalized_query}",
+            answer
+        )
+
+        print(
+            "\nAnswer Cached!"
+        )
+
+    except Exception:
+
+        print(
+            "\nCache skipped."
+        )
 
     # ------------------------
     # SAVE CHAT HISTORY
@@ -339,9 +406,15 @@ while True:
 
             "retrieved_docs":
             result.get(
-                "refined_docs",
+                "retrieved_docs",
                 []
-            )
+            ),
+
+            "resolved_entities":
+            entities,
+
+            "resolved_entity_type":
+            result.get("resolved_entity_type")
         }
     )
 
